@@ -1,0 +1,178 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+particles = np.loadtxt("particles.dat")
+xs = particles[:, 0]
+ys = particles[:, 1]
+
+
+M = 100                 
+Nx, Ny = M, M           
+dx = dy = 1.0           
+eps0 = 8.854e-12        
+qe = -1.602e-19        
+
+
+rho = np.zeros((Nx, Ny), dtype=float)
+
+def cic_deposit(rho, xs, ys, q_particle):
+    for x, y in zip(xs, ys):
+        xc = x - 0.5
+        yc = y - 0.5
+        if xc <= 0:
+            i0 = 0
+            tx = 0.0
+        elif xc >= M - 1:
+            i0 = M - 2
+            tx = 1.0
+        else:
+            i0 = int(xc)
+            tx = xc - i0  
+
+        if yc <= 0:
+            j0 = 0
+            ty = 0.0
+        elif yc >= M - 1:
+            j0 = M - 2
+            ty = 1.0
+        else:
+            j0 = int(yc)
+            ty = yc - j0   
+
+        w00 = (1 - tx) * (1 - ty)
+        w10 = tx * (1 - ty)
+        w01 = (1 - tx) * ty
+        w11 = tx * ty
+
+        rho[i0,     j0    ] += q_particle * w00
+        rho[i0 + 1, j0    ] += q_particle * w10
+        rho[i0,     j0 + 1] += q_particle * w01
+        rho[i0 + 1, j0 + 1] += q_particle * w11
+
+cic_deposit(rho, xs, ys, qe)
+
+
+plt.figure(figsize=(5, 4))
+plt.imshow(rho.T, origin='lower', extent=[0, M, 0, M])
+plt.colorbar(label="charge (C)")
+plt.xlabel("x")
+plt.ylabel("y")
+plt.title("Charge density (cloud-in-cell)")
+plt.tight_layout()
+plt.show()
+
+
+def jacobi_poisson(rho, eps0, tol=1e-10, max_iter=20000):
+    Nx, Ny = rho.shape
+    phi = np.zeros_like(rho, dtype=float)
+    phi_new = np.zeros_like(phi, dtype=float)
+
+    for it in range(max_iter):
+        for i in range(1, Nx - 1):
+            for j in range(1, Ny - 1):
+                phi_new[i, j] = 0.25 * (
+                    phi[i+1, j] + phi[i-1, j] +
+                    phi[i, j+1] + phi[i, j-1] +
+                    rho[i, j] / eps0
+                )
+
+        diff = np.max(np.abs(phi_new - phi))
+        phi, phi_new = phi_new, phi
+
+        if diff < tol:
+            return phi, it + 1
+
+    return phi, max_iter  
+
+phi_jacobi, it_jacobi = jacobi_poisson(rho, eps0, tol=1e-10)
+print("Jacobi relaxation iterations:", it_jacobi)
+
+plt.figure(figsize=(5, 4))
+plt.imshow(phi_jacobi.T, origin='lower', extent=[0, M, 0, M])
+plt.colorbar(label="potential (V)")
+plt.xlabel("x")
+plt.ylabel("y")
+plt.title(f"Potential (Jacobi), iterations = {it_jacobi}")
+plt.tight_layout()
+plt.show()
+
+def sor_poisson(rho, eps0, omega, tol=1e-10, max_iter=20000):
+    Nx, Ny = rho.shape
+    phi = np.zeros_like(rho, dtype=float)
+
+    for it in range(max_iter):
+        max_diff = 0.0
+
+        for i in range(1, Nx - 1):
+            for j in range(1, Ny - 1):
+                phi_GS = 0.25 * (
+                    phi[i+1, j] + phi[i-1, j] +
+                    phi[i, j+1] + phi[i, j-1] +
+                    rho[i, j] / eps0
+                )
+                new_val = phi[i, j] + omega * (phi_GS - phi[i, j])
+                diff = abs(new_val - phi[i, j])
+                if diff > max_diff:
+                    max_diff = diff
+                phi[i, j] = new_val
+
+        if max_diff < tol:
+            return phi, it + 1
+
+    return phi, max_iter
+
+def iterations_for_omega(omega, tol=1e-6):
+    _, it = sor_poisson(rho, eps0, omega, tol=tol)
+    return it
+
+def golden_search_omega(a=1.0, b=2.0, tol=1e-3):
+    gr = (np.sqrt(5) + 1) / 2 
+    c = b - (b - a) / gr
+    d = a + (b - a) / gr
+
+    fc = iterations_for_omega(c)
+    fd = iterations_for_omega(d)
+
+    best_omegas = []   
+
+    while (b - a) > tol:
+        if fc < fd:
+            b, fd = d, fc
+            d = c
+            c = b - (b - a) / gr
+            fc = iterations_for_omega(c)
+        else:
+            a, fc = c, fd
+            c = d
+            d = a + (b - a) / gr
+            fd = iterations_for_omega(d)
+
+        best_omegas.append((a + b) / 2)
+
+    omega_opt = (a + b) / 2
+    return omega_opt, best_omegas
+
+omega_opt, omega_history = golden_search_omega(a=1.0, b=2.0, tol=1e-3)
+print("Optimal omega (approx):", omega_opt)
+
+phi_sor, it_sor = sor_poisson(rho, eps0, omega_opt, tol=1e-10)
+print("SOR iterations with optimal omega:", it_sor)
+
+plt.figure(figsize=(5,4))
+plt.imshow(phi_sor.T, origin='lower', extent=[0, M, 0, M])
+plt.colorbar(label="potential (V)")
+plt.xlabel("x")
+plt.ylabel("y")
+plt.title(f"Potential (SOR, ω={omega_opt:.3f}), iterations = {it_sor}")
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(5,4))
+plt.plot(omega_history, marker='o')
+plt.xlabel("search step")
+plt.ylabel(r"best $\omega$")
+plt.title("Evolution of optimal ω during golden search")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
