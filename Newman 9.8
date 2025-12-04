@@ -1,0 +1,91 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+
+hbar = 1.054e-34          
+m = 9.109e-31            
+L = 1.0e-8              
+
+N = 1000                  
+a = L / N                 
+h = 1.0e-18              
+
+
+x0 = L / 2.0             
+sigma = 1.0e-10           
+kappa = 5.0e10          
+
+
+x = np.arange(1, N) * a          
+n = N - 1                      
+
+
+psi0 = np.exp(-(x - x0) ** 2 / (2 * sigma ** 2)) * np.exp(1j * kappa * x)
+psi = psi0.copy()
+
+
+coef = 1j * hbar * h / (2 * m * a ** 2)
+
+a1 = 1.0 + coef
+a2 = -0.5 * coef
+b1 = 1.0 - coef
+b2 = 0.5 * coef
+
+
+diag_A = a1 * np.ones(n, dtype=complex)
+off_A  = a2 * np.ones(n - 1, dtype=complex)
+A = (np.diag(diag_A)
+     + np.diag(off_A, 1)
+     + np.diag(off_A, -1))
+
+diag_B = b1 * np.ones(n, dtype=complex)
+off_B  = b2 * np.ones(n - 1, dtype=complex)
+B = (np.diag(diag_B)
+     + np.diag(off_B, 1)
+     + np.diag(off_B, -1))
+
+
+def crank_nicolson_step(psi_vec):
+    v = B @ psi_vec                 
+    psi_next = np.linalg.solve(A, v)  
+    return psi_next
+
+
+x_nm = x * 1e9
+
+
+prob = np.abs(psi) ** 2
+
+fig, ax = plt.subplots(figsize=(7, 4))
+line, = ax.plot(x_nm, prob)
+
+ax.set_xlabel("x (nm)")
+ax.set_ylabel(r"$|\psi(x,t)|^2$")
+ax.set_title("1D Schrödinger equation (Crank–Nicolson)")
+
+ax.set_xlim(x_nm[0], x_nm[-1])
+ax.set_ylim(0, 1.2 * prob.max())
+
+
+psi_holder = [psi]
+
+def update(frame):
+    psi_old = psi_holder[0]
+    psi_new = crank_nicolson_step(psi_old)
+    psi_holder[0] = psi_new
+
+    prob_new = np.abs(psi_new) ** 2
+    line.set_ydata(prob_new)
+
+    return line,
+
+
+steps = 300
+ani = FuncAnimation(fig, update,
+                    frames=steps,
+                    interval=30,
+                    blit=True)
+
+from IPython.display import HTML
+HTML(ani.to_jshtml())   # Use Google-colab
